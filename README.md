@@ -94,6 +94,18 @@ See [config.example.toml](config.example.toml) for all available options. All fi
 
 ---
 
+## Releasing
+
+```bash
+./scripts/release.sh patch   # or minor / major / 1.2.3
+git push && git push origin v<version>
+```
+
+The script bumps the version in `Cargo.toml`, commits, and creates a `v*` tag.
+Pushing the tag triggers CI: builds `.app` + `.dmg` and publishes a GitHub Release with auto-generated changelog.
+
+---
+
 ## How it works
 
 1. App starts with proxy **stopped**
