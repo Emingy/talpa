@@ -27,22 +27,6 @@ jobs:
             - name: cargo clippy
               run: cargo clippy -- -D warnings
 
-    tag:
-        name: 🏷️ Tag
-        needs: test
-        if: github.ref == 'refs/heads/master'
-        runs-on: ubuntu-latest
-        permissions:
-            contents: write
-        steps:
-            - uses: actions/checkout@v4
-
-            - name: Bump version and push tag
-              uses: mathieudutour/github-tag-action@v6.2
-              with:
-                  github_token: ${{ secrets.GITHUB_TOKEN }}
-                  default_bump: patch
-
     build:
         name: 🔨 Build
         needs: test
@@ -100,6 +84,14 @@ jobs:
             contents: write
         steps:
             - uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Generate release notes
+              uses: orhun/git-cliff-action@v4
+              id: cliff
+              with:
+                  args: --latest --strip header
 
             - name: Download artifact
               uses: actions/download-artifact@v4
@@ -109,7 +101,8 @@ jobs:
             - name: Create GitHub Release
               uses: softprops/action-gh-release@v2
               with:
+                  name: ${{ github.ref_name }}
+                  body: ${{ steps.cliff.outputs.content }}
                   files: |
                       Talpa.dmg
                       Talpa.zip
-                  generate_release_notes: true
