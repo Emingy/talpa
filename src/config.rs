@@ -151,9 +151,33 @@ mod tests {
     }
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            domains: vec![],
+            ips: vec![],
+            listen: ListenConfig { addr: "127.0.0.1".into(), port: 1080 },
+            upstream: UpstreamConfig { addr: "127.0.0.1".into(), port: 10808 },
+            ssh_tunnel: None,
+            system_proxy: None,
+            dns: None,
+        }
+    }
+}
+
 impl Config {
-    pub fn load(path: &std::path::Path) -> Self {
-        use tracing::error;
+    pub fn load_or_create(path: &std::path::Path) -> Self {
+        use tracing::{error, info};
+        if !path.exists() {
+            let default = Self::default();
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            if default.save(path).is_ok() {
+                info!("created default config at {}", path.display());
+            }
+            return default;
+        }
         let raw = match std::fs::read_to_string(path) {
             Ok(s) => s,
             Err(e) => { error!("cannot read {}: {}", path.display(), e); std::process::exit(1); }

@@ -62,11 +62,14 @@ Requirements: Rust stable.
 
 ## Configuration
 
-Config file is `config.toml` next to the binary (or pass path as first argument).
+| Mode | Config path |
+|---|---|
+| Installed app | `~/Library/Application Support/Talpa/config.toml` (created automatically on first launch) |
+| Local development (`cargo run`) | `config.toml` in the project directory |
 
-See [config.example.toml](config.example.toml) for a full annotated example.
+To use a custom path, pass it as the first argument: `./talpa /path/to/config.toml`
 
-All fields except `domains`, `listen`, and `upstream` are optional.
+See [config.example.toml](config.example.toml) for all available options. All fields except `listen` and `upstream` are optional.
 
 ---
 

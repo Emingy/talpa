@@ -40,11 +40,15 @@ cargo bundle --release          # → target/release/bundle/osx/Talpa.app
 
 ## Config
 
-Loaded from `config.toml` next to the binary (or first CLI arg). See `config.example.toml`.
-All settings are also editable at runtime via the menu bar without restarting the app.
+- **Debug builds** (`cargo run`): loads `config.toml` from the current directory.
+- **Release builds** (`.app`): loads `~/Library/Application Support/<bundle-name>/config.toml`; created with defaults on first launch.
+- Pass a custom path as the first CLI arg to override: `./talpa /path/to/config.toml`.
+
+The bundle name in the path comes from `[package.metadata.bundle].name` in `Cargo.toml`, read at compile time by `build.rs`.
+See `config.example.toml` for all available options. All settings are also editable at runtime via the menu bar.
 
 ## CI / Release
 
-- Push to `master` → runs tests → auto-creates a semver tag (conventional commits determine bump).
-- Push of `v*` tag → builds `.app` bundle + `.dmg` → creates GitHub Release with both as assets.
+- Push to `master` → runs tests + clippy.
+- Push a `v*` tag manually → builds `.app` bundle (ad-hoc signed) + `.dmg` → creates GitHub Release with changelog from conventional commits.
 - Workflow: [.github/workflows/release.yml](.github/workflows/release.yml)
