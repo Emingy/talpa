@@ -1,0 +1,5 @@
+/target
+config.toml
+.DS_Store
+.idea
+assets/AppIcon.icns
