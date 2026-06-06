@@ -54,6 +54,9 @@ jobs:
             - name: Build app bundle
               run: cargo bundle --release
 
+            - name: Ad-hoc sign
+              run: codesign --deep --force --sign - target/release/bundle/osx/Talpa.app
+
             - name: Create DMG
               run: |
                   create-dmg \
