@@ -8,6 +8,7 @@ use tray_icon::{TrayIcon, TrayIconBuilder};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
 use winit::window::WindowId;
 
 use tracing::error;
@@ -120,7 +121,10 @@ impl TrayApp {
     }
 
     pub fn run(config_path: PathBuf, config: Arc<crate::config::Config>, state: Arc<ProxyState>, cmd_tx: mpsc::SyncSender<Cmd>, done_rx: mpsc::Receiver<()>) {
-        let event_loop = EventLoop::new().unwrap();
+        let event_loop = EventLoop::builder()
+            .with_activation_policy(ActivationPolicy::Accessory)
+            .build()
+            .unwrap();
         let mut app = TrayApp::new(config_path, config, state, cmd_tx, done_rx);
         event_loop.run_app(&mut app).unwrap();
     }
