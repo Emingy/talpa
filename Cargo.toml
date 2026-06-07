@@ -2,6 +2,7 @@
 name = "talpa"
 version = "1.0.2"
 edition = "2021"
+repository = "https://github.com/Emingy/talpa"
 
 [package.metadata.bundle]
 name = "Talpa"
@@ -28,3 +29,5 @@ toml = "0.8"
 tray-icon = "0.19"
 winit = "0.30"
 ipnet = "2"
+ureq = { version = "2", features = ["json"] }
+serde_json = "1"

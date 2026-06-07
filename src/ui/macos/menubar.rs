@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
@@ -17,6 +17,7 @@ use crate::core::proxy_service::{Cmd, ProxyState};
 use crate::ui::macos::dialogs::{dialog_choose, dialog_input, dialog_password};
 use crate::utils::config_helpers::{ensure_dns, ensure_sp, ensure_tunnel};
 use crate::utils::icons::circle_icon;
+use crate::utils::updater;
 
 pub struct TrayApp {
     config_path: PathBuf,
@@ -63,6 +64,12 @@ pub struct TrayApp {
     // ── upstream ──
     up_addr_item: MenuItem,
     up_port_item: MenuItem,
+
+    // ── about ──
+    version_item: MenuItem,
+    update_item: MenuItem,
+    latest_version: Arc<Mutex<Option<String>>>,
+    last_latest: Option<String>,
 }
 
 impl TrayApp {
@@ -115,7 +122,17 @@ impl TrayApp {
 
             up_addr_item: MenuItem::new("", true, None),
             up_port_item: MenuItem::new("", true, None),
+
+            version_item: MenuItem::new(
+                format!("Version: {}", env!("CARGO_PKG_VERSION")),
+                false,
+                None,
+            ),
+            update_item: MenuItem::new("", false, None),
+            latest_version: Arc::new(Mutex::new(None)),
+            last_latest: None,
         };
+        updater::spawn_update_check(env!("CARGO_PKG_REPOSITORY"), app.latest_version.clone());
         app.sync_item_texts();
         app
     }
@@ -215,8 +232,12 @@ impl TrayApp {
             &ip_sub,
             &settings_sub,
             &PredefinedMenuItem::separator(),
-            &self.quit_item,
+            &self.version_item,
         ]);
+        if self.update_item.is_enabled() {
+            let _ = menu.append(&self.update_item);
+        }
+        let _ = menu.append_items(&[&PredefinedMenuItem::separator(), &self.quit_item]);
         menu
     }
 
@@ -248,6 +269,20 @@ impl TrayApp {
             self.dispatch(id, event_loop);
         }
         self.sync_status_icon();
+        self.sync_update_item();
+    }
+
+    fn sync_update_item(&mut self) {
+        let latest = self.latest_version.lock().unwrap().clone();
+        if latest == self.last_latest { return; }
+        self.last_latest = latest.clone();
+        if let Some(ref tag) = latest {
+            if updater::is_newer(env!("CARGO_PKG_VERSION"), tag) {
+                self.update_item.set_text(format!("↑ Update available: {}", tag));
+                self.update_item.set_enabled(true);
+                self.refresh_menu();
+            }
+        }
     }
 
     fn sync_status_icon(&mut self) {
@@ -290,7 +325,8 @@ impl TrayApp {
         if id == self.dns_upstream_item.id()    { self.do_dns_upstream(); return; }
         if id == self.dns_fallback_item.id()    { self.do_dns_fallback(); return; }
         if id == self.up_addr_item.id()         { self.do_upstream_addr(); return; }
-        if id == self.up_port_item.id()         { self.do_upstream_port(); }
+        if id == self.up_port_item.id()         { self.do_upstream_port(); return; }
+        if id == self.update_item.id()          { self.do_open_update(); }
     }
 
     // ── action handlers ───────────────────────────────────────────────────────
@@ -453,6 +489,15 @@ impl TrayApp {
         let cur = self.config.upstream.addr.clone();
         if let Some(v) = dialog_input("Upstream Address", "Upstream SOCKS5 address:", &cur) {
             self.update_config(|c| c.upstream.addr = v);
+        }
+    }
+
+    fn do_open_update(&self) {
+        let repo = env!("CARGO_PKG_REPOSITORY");
+        if !repo.is_empty() {
+            let _ = std::process::Command::new("open")
+                .arg(format!("{}/releases/latest", repo))
+                .spawn();
         }
     }
 
