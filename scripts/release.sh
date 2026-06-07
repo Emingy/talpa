@@ -26,7 +26,7 @@ echo "  $current → $next"
 
 sed -i '' "s/^version = \"$current\"/version = \"$next\"/" "$CARGO_TOML"
 
-git add "$CARGO_TOML"
+git add .
 git commit -m "chore: bump version to $next"
 git tag "v$next"
 
