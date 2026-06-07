@@ -23,10 +23,10 @@ pub struct TrayApp {
     config_path: PathBuf,
     config: Arc<crate::config::Config>,
     state: Arc<ProxyState>,
-    cmd_tx: mpsc::SyncSender<Cmd>,
+    cmd_tx: tokio::sync::mpsc::Sender<Cmd>,
     done_rx: mpsc::Receiver<()>,
     tray: Option<TrayIcon>,
-    last_running: Option<bool>,
+    last_status: Option<u8>, // 0=stopped, 1=degraded, 2=running
 
     // ── top-level items ──
     status_item: MenuItem,
@@ -77,7 +77,7 @@ impl TrayApp {
         config_path: PathBuf,
         config: Arc<crate::config::Config>,
         state: Arc<ProxyState>,
-        cmd_tx: mpsc::SyncSender<Cmd>,
+        cmd_tx: tokio::sync::mpsc::Sender<Cmd>,
         done_rx: mpsc::Receiver<()>,
     ) -> Self {
         let t = config.ssh_tunnel.as_ref();
@@ -91,7 +91,7 @@ impl TrayApp {
             done_rx,
             config: config.clone(),
             tray: None,
-            last_running: None,
+            last_status: None,
 
             status_item: MenuItem::new("○ Proxy: Stopped", false, None),
             toggle_item: MenuItem::new("Start", true, None),
@@ -137,7 +137,7 @@ impl TrayApp {
         app
     }
 
-    pub fn run(config_path: PathBuf, config: Arc<crate::config::Config>, state: Arc<ProxyState>, cmd_tx: mpsc::SyncSender<Cmd>, done_rx: mpsc::Receiver<()>) {
+    pub fn run(config_path: PathBuf, config: Arc<crate::config::Config>, state: Arc<ProxyState>, cmd_tx: tokio::sync::mpsc::Sender<Cmd>, done_rx: mpsc::Receiver<()>) {
         let event_loop = EventLoop::builder()
             .with_activation_policy(ActivationPolicy::Accessory)
             .build()
@@ -286,14 +286,25 @@ impl TrayApp {
     }
 
     fn sync_status_icon(&mut self) {
-        let running = self.state.running.load(Ordering::Relaxed);
-        if self.last_running == Some(running) { return; }
-        self.last_running = Some(running);
+        let running    = self.state.running.load(Ordering::Relaxed);
+        let connecting = self.state.connecting.load(Ordering::Relaxed);
+        let tunnel_req = self.state.tunnel_required.load(Ordering::Relaxed);
+        let tunnel_up  = self.state.tunnel_up.load(Ordering::Relaxed);
+        let status: u8 = if running {
+            if tunnel_req && !tunnel_up { 2 } else { 3 }
+        } else if connecting {
+            1
+        } else {
+            0
+        };
+        if self.last_status == Some(status) { return; }
+        self.last_status = Some(status);
         if let Some(tray) = &self.tray {
-            let (label, toggle, color) = if running {
-                ("● Proxy: Running", "Stop", [52u8, 199, 89])
-            } else {
-                ("○ Proxy: Stopped", "Start", [142u8, 142, 147])
+            let (label, toggle, color) = match status {
+                3 => ("● Proxy: Running",      "Stop",  [52u8,  199, 89]),
+                2 => ("● Proxy: Tunnel down",  "Stop",  [255u8, 149,  0]),
+                1 => ("◌ Proxy: Connecting…",  "Stop",  [0u8,   122, 255]),
+                _ => ("○ Proxy: Stopped",      "Start", [142u8, 142, 147]),
             };
             let _ = tray.set_icon(Some(circle_icon(color)));
             self.status_item.set_text(label);
@@ -332,8 +343,9 @@ impl TrayApp {
     // ── action handlers ───────────────────────────────────────────────────────
 
     fn do_toggle(&mut self) {
-        let running = self.state.running.load(Ordering::Relaxed);
-        let _ = self.cmd_tx.try_send(if running { Cmd::Stop } else { Cmd::Start });
+        let active = self.state.running.load(Ordering::Relaxed)
+            || self.state.connecting.load(Ordering::Relaxed);
+        let _ = self.cmd_tx.try_send(if active { Cmd::Stop } else { Cmd::Start });
     }
 
     fn do_quit(&mut self, event_loop: &ActiveEventLoop) {

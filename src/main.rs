@@ -40,7 +40,7 @@ fn main() {
     let matcher = Arc::new(core::matcher::Matcher::new(&config.domains, &config.ips));
     let state = Arc::new(ProxyState::new());
 
-    let (cmd_tx, cmd_rx) = mpsc::sync_channel::<Cmd>(4);
+    let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<Cmd>(4);
     let (done_tx, done_rx) = mpsc::sync_channel::<()>(1);
 
     {
