@@ -37,6 +37,7 @@ cargo bundle --release          # → target/release/bundle/osx/Talpa.app
 - **SSH_ASKPASS** — password auth for SSH tunnel uses a temp script at `/tmp/talpa-askpass.sh` with `chmod 700`; `SSH_ASKPASS_REQUIRE=force` prevents tty prompts.
 - **`core/` has no UI dependency** — `ui/` imports `core/`, never the other way around.
 - **`ui/<platform>/`** — platform-specific UI code gated with `#[cfg(target_os = "...")]`. Currently only `ui/macos/` exists: `dialogs.rs` uses `osascript`, `menubar.rs` uses AppKit via `tray-icon` + `winit`. When adding Windows support, create `ui/windows/` with the same public interface.
+- **Update check** — `utils/updater.rs` spawns a background thread 3 seconds after launch, fetches the latest GitHub release via the API, and compares with `CARGO_PKG_VERSION`. If a newer version is found, a clickable menu item appears that opens the releases page. The GitHub repo URL comes from `[package].repository` in `Cargo.toml`.
 
 ## Config
 

@@ -31,6 +31,7 @@
 - Configures `~/.npmrc`, `~/.gitconfig`, `~/.curlrc`
 - DNS proxy: matched domains resolved via upstream DNS, everything else via fallback
 - All settings editable from the menu bar — no config file editing required
+- Automatic update check on launch — notifies in the menu when a new version is available
 
 ---
 
