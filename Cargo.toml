@@ -1,6 +1,6 @@
 [package]
 name = "talpa"
-version = "1.0.2"
+version = "1.0.1"
 edition = "2021"
 repository = "https://github.com/Emingy/talpa"
 

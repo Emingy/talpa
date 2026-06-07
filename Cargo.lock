@@ -2214,7 +2214,7 @@ dependencies = [
 
 [[package]]
 name = "talpa"
-version = "1.0.2"
+version = "1.0.1"
 dependencies = [
  "ipnet",
  "serde",
