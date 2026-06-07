@@ -114,3 +114,14 @@ Pushing the tag triggers CI: builds `.app` + `.dmg` and publishes a GitHub Relea
 3. All TCP connections to matched domains/IPs are forwarded through the upstream proxy; everything else connects directly
 4. DNS queries for matched domains are forwarded to `upstream_dns`; others go to `fallback_dns`
 5. Click **Stop** or **Quit** — proxy stops, all system settings are rolled back automatically
+
+## Status indicators
+
+| Icon | Label | Meaning |
+|---|---|---|
+| ○ | Proxy: Stopped | Not running |
+| ● (blue) | Proxy: Connecting… | Starting up, waiting for SSH tunnel |
+| ● (orange) | Proxy: Tunnel down | Running, but SSH tunnel failed to connect |
+| ● (green) | Proxy: Running | All systems up |
+
+Clicking **Stop** during *Connecting* cancels startup immediately.

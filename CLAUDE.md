@@ -32,8 +32,10 @@ cargo bundle --release          # → target/release/bundle/osx/Talpa.app
 
 ## Key architecture decisions
 
-- **tokio on background thread, winit on main thread** — macOS requires `NSApp` on the main thread; tokio runtime lives on a dedicated thread and communicates via `mpsc::sync_channel<Cmd>`.
+- **tokio on background thread, winit on main thread** — macOS requires `NSApp` on the main thread; tokio runtime lives on a dedicated thread and communicates via `tokio::sync::mpsc::channel<Cmd>` (async sender, usable with `try_send` from the UI thread).
 - **Cmd::Reload(Arc<Config>)** — hot-reload without restart: stop current services, build new `Matcher` from updated config, restart.
+- **`start_cancellable`** — during startup, `Cmd::Stop`/`Cmd::Quit` are processed concurrently via `tokio::select!`. A `watch::Sender<bool>` cancel signal interrupts the SSH tunnel wait loop in `Service::start`, which returns `Option<Service>` (`None` = cancelled).
+- **4-state `ProxyState`** — `running`, `connecting`, `tunnel_up`, `tunnel_required` atomics. Menu bar reflects all four states: Stopped (gray) → Connecting (blue) → Tunnel down (orange) → Running (green). `tunnel_required` is set when `ssh_tunnel` config is present so the menu bar knows to distinguish "running without tunnel" from "fully active".
 - **SSH_ASKPASS** — password auth for SSH tunnel uses a temp script at `/tmp/talpa-askpass.sh` with `chmod 700`; `SSH_ASKPASS_REQUIRE=force` prevents tty prompts.
 - **`core/` has no UI dependency** — `ui/` imports `core/`, never the other way around.
 - **`ui/<platform>/`** — platform-specific UI code gated with `#[cfg(target_os = "...")]`. Currently only `ui/macos/` exists: `dialogs.rs` uses `osascript`, `menubar.rs` uses AppKit via `tray-icon` + `winit`. When adding Windows support, create `ui/windows/` with the same public interface.
