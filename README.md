@@ -16,7 +16,7 @@
 | Platform | Status |
 |---|---|
 | macOS | ✅ Supported |
-| Windows | 🔜 Planned |
+| Windows | — |
 | Linux | — |
 ---
 
