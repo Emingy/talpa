@@ -3,20 +3,11 @@ use std::net::IpAddr;
 
 use crate::config::{config, domain_enabled};
 
-// Mask formats (see `config.domains`):
-//   "**.wb.ru"  — base domain and any depth  (a.b.c.wb.ru)
-//   "*.wb.ru"   — exactly one level          (tracker.wb.ru, not a.b.wb.ru)
-//   "wb.ru"     — exact match
-
 pub fn match_domain(packet: &[u8]) -> bool {
     if let Ok(msg) = Message::from_vec(packet)
         && let Some(query) = msg.queries.first()
     {
         let raw = query.name().to_string();
-        // hickory appends a trailing dot: "tracker.wb.ru.". DNS names are
-        // case-insensitive and some resolvers (notably the Windows DNS
-        // client) randomise case for anti-spoofing (0x20 encoding), so
-        // normalise to lowercase before matching.
         let domain = raw.trim_end_matches('.').to_ascii_lowercase();
         return config()
             .domains
