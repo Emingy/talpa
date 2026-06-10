@@ -11,6 +11,18 @@
 
 ---
 
+## Why it needs root
+
+Talpa operates at the network layer, which the OS guards behind elevated privileges. It requires root (Administrator on Windows) to:
+
+- **Create the TUN device** — opening a virtual network interface (`utun` / `tun` / wintun) is a privileged operation.
+- **Modify the routing table** — installing host (`/32`) and static routes so matched traffic flows through the TUN.
+- **Reconfigure DNS** — installing per-domain split-DNS rules (macOS `/etc/resolver`, Linux `systemd-resolved`, Windows NRPT) and binding the local resolver on port `53` (a privileged port).
+
+All of these are reversed on exit. Without elevation the tool cannot create the interface or change routing/DNS, so it must run as root (`sudo`) on macOS/Linux and elevated on Windows.
+
+---
+
 ## Platform support
 
 | Platform | Status |
