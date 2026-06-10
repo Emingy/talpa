@@ -1,0 +1,41 @@
+# talpa configuration.
+# On first run this template is created automatically at the standard per-OS
+# config location (macOS ~/Library/Application Support/talpa/config.yml,
+# Linux ~/.config/talpa/config.yml, Windows %APPDATA%\talpa\config.yml).
+# Override the path with the first CLI arg:
+#   sudo ./talpa /path/to/config.yml
+# Edit the values below, then Reload config from the tray menu.
+# Any omitted field falls back to the built-in default shown below.
+
+ssh:
+  # user@host for the SSH SOCKS5 tunnel.
+  target: "user@remote-host"
+
+socks:
+  # Local port for the ssh -D SOCKS5 proxy.
+  port: 1080
+
+tun:
+  address: "10.0.0.2"        # TUN interface address
+  gateway: "10.0.0.1"        # route target / peer address
+  netmask: "255.255.255.0"
+  mtu: 1500
+  min_ttl_secs: 60           # floor for DNS-derived route TTLs
+  # Always-present routes, independent of DNS. Single IP or CIDR subnet.
+  static_routes:
+    # - "1.2.3.4"
+    # - "10.20.0.0/16"
+
+dns:
+  listen_addr: "127.0.0.1:53"           # local DNS proxy bind address
+  upstream_addr: "1.1.1.1:53"           # resolver for non-matched domains
+  upstream_socks_addr: "10.0.0.53:53"   # resolver (over SOCKS) for matched domains
+
+# Domains routed through the proxy.
+#   "**.example.com" — base domain and any depth (a.b.c.example.com)
+#   "*.example.com"  — exactly one level (api.example.com, not a.b.example.com)
+#   "example.com"    — exact match
+domains:
+  - "**.example.com"
+  - "*.internal.example.org"
+  - "example.net"

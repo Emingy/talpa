@@ -1,196 +1,185 @@
-use serde::{Deserialize, Serialize};
+use anyhow::{Context, Result};
+use serde::Deserialize;
+use std::collections::HashSet;
+use std::path::Path;
+use std::sync::{Arc, LazyLock, Mutex, OnceLock, RwLock};
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct Config {
-    pub domains: Vec<String>,
-    #[serde(default)]
-    pub ips: Vec<String>,
-    pub listen: ListenConfig,
-    pub upstream: UpstreamConfig,
-    pub ssh_tunnel: Option<SshTunnelConfig>,
-    pub system_proxy: Option<SystemProxyConfig>,
-    pub dns: Option<DnsConfig>,
+// The live config, swappable so the UI can reload from disk at runtime.
+static CONFIG: OnceLock<RwLock<Arc<Config>>> = OnceLock::new();
+
+// Runtime overlay: masks the UI has toggled off. Independent of the YAML file
+// so a reload starts from a clean slate (see `Config::reload`).
+static DISABLED_DOMAINS: LazyLock<Mutex<HashSet<String>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+fn slot() -> &'static RwLock<Arc<Config>> {
+    CONFIG.get().expect("config not loaded; call Config::load() first")
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct ListenConfig {
-    pub addr: String,
-    pub port: u16,
+/// Returns a snapshot of the loaded configuration. Cheap (an `Arc` clone).
+/// Panics if [`Config::load`] was not called first.
+pub fn config() -> Arc<Config> {
+    slot().read().unwrap().clone()
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct UpstreamConfig {
-    pub addr: String,
-    pub port: u16,
+/// Whether a domain mask is currently active. The UI can toggle masks off at
+/// runtime without rewriting the YAML file.
+pub fn domain_enabled(mask: &str) -> bool {
+    !DISABLED_DOMAINS.lock().unwrap().contains(mask)
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct SshTunnelConfig {
-    pub user: String,
-    pub host: String,
-    pub ssh_port: u16,
-    pub local_port: u16,
-    /// Plain-text SSH password. If absent, key-based auth is used.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub password: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct SystemProxyConfig {
-    pub enabled: bool,
-    #[serde(default = "bool_true")]
-    pub configure_npm: bool,
-    #[serde(default = "bool_true")]
-    pub configure_git: bool,
-    #[serde(default = "bool_true")]
-    pub configure_curl: bool,
-}
-
-impl Default for SystemProxyConfig {
-    fn default() -> Self {
-        Self { enabled: true, configure_npm: true, configure_git: true, configure_curl: true }
+/// Toggle a domain mask on/off at runtime.
+pub fn set_domain_enabled(mask: &str, enabled: bool) {
+    let mut set = DISABLED_DOMAINS.lock().unwrap();
+    if enabled {
+        set.remove(mask);
+    } else {
+        set.insert(mask.to_string());
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct DnsConfig {
-    pub listen_port: u16,
-    pub upstream_dns: String,
-    pub fallback_dns: String,
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Config {
+    pub ssh: Ssh,
+    pub socks: Socks,
+    pub tun: Tun,
+    pub dns: Dns,
+    /// Domain masks routed through the proxy. See `dns::utils` for syntax.
+    pub domains: Vec<String>,
 }
 
-impl Default for DnsConfig {
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Ssh {
+    /// `user@host` passed to ssh.
+    pub target: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Socks {
+    /// Local port the ssh `-D` SOCKS5 proxy listens on.
+    pub port: u16,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Tun {
+    /// Address assigned to the TUN interface (e.g. `10.0.0.2`).
+    pub address: String,
+    /// Gateway / peer address used as the route target (e.g. `10.0.0.1`).
+    pub gateway: String,
+    pub netmask: String,
+    pub mtu: u16,
+    /// Floor for DNS-derived route TTLs, in seconds.
+    pub min_ttl_secs: u64,
+    /// Always-present routes. Single IP (`1.2.3.4`) or CIDR (`1.2.3.0/24`).
+    pub static_routes: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Dns {
+    /// Address the local DNS proxy binds to (e.g. `127.0.0.1:53`).
+    pub listen_addr: String,
+    /// Upstream resolver for non-matched domains.
+    pub upstream_addr: String,
+    /// Upstream resolver reached over SOCKS for matched domains.
+    pub upstream_socks_addr: String,
+}
+
+impl Socks {
+    /// `127.0.0.1:<port>` — the address clients use to reach the SOCKS proxy.
+    pub fn addr(&self) -> String {
+        format!("127.0.0.1:{}", self.port)
+    }
+}
+
+impl Config {
+    /// Reads and parses config from `path`, falling back to built-in defaults
+    /// when the file is absent.
+    fn read_from(path: &Path) -> Result<Config> {
+        if path.exists() {
+            let raw = std::fs::read_to_string(path)
+                .with_context(|| format!("failed to read config {}", path.display()))?;
+            serde_yaml::from_str(&raw)
+                .with_context(|| format!("failed to parse config {}", path.display()))
+        } else {
+            log::info!("[CONFIG] {} not found, using defaults", path.display());
+            Ok(Config::default())
+        }
+    }
+
+    /// Loads config into the process-global slot. Call once at startup.
+    pub fn load(path: impl AsRef<Path>) -> Result<()> {
+        let cfg = Self::read_from(path.as_ref())?;
+        CONFIG.get_or_init(|| RwLock::new(Arc::new(cfg)));
+        Ok(())
+    }
+
+    /// Re-reads config from `path` and swaps it in, clearing runtime domain
+    /// toggles so the on-disk state becomes authoritative again.
+    pub fn reload(path: impl AsRef<Path>) -> Result<()> {
+        let cfg = Self::read_from(path.as_ref())?;
+        *slot().write().unwrap() = Arc::new(cfg);
+        DISABLED_DOMAINS.lock().unwrap().clear();
+        Ok(())
+    }
+}
+
+impl Default for Ssh {
+    fn default() -> Self {
+        Self { target: "user@192.168.0.1".into() }
+    }
+}
+
+impl Default for Socks {
+    fn default() -> Self {
+        Self { port: 1080 }
+    }
+}
+
+impl Default for Tun {
     fn default() -> Self {
         Self {
-            listen_port: 5300,
-            upstream_dns: "8.8.8.8:53".into(),
-            fallback_dns: "8.8.8.8:53".into(),
+            address: "10.0.0.2".into(),
+            gateway: "10.0.0.1".into(),
+            netmask: "255.255.255.0".into(),
+            mtu: 1500,
+            min_ttl_secs: 60,
+            static_routes: vec![],
         }
     }
 }
 
-fn bool_true() -> bool { true }
+impl Default for Dns {
+    fn default() -> Self {
+        Self {
+            listen_addr: "127.0.0.1:53".into(),
+            upstream_addr: "1.1.1.1:53".into(),
+            upstream_socks_addr: "8.8.8.8:53".into(),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn minimal_toml() -> &'static str {
-        r#"
-        domains = ["**.example.com"]
-        ips = []
-        [listen]
-        addr = "127.0.0.1"
-        port = 1080
-        [upstream]
-        addr = "127.0.0.1"
-        port = 10808
-        "#
+    #[test]
+    fn example_config_parses() {
+        let raw =
+            std::fs::read_to_string("config.example.yml").expect("config.example.yml present");
+        let cfg: Config = serde_yaml::from_str(&raw).expect("config.example.yml parses");
+        assert_eq!(cfg.socks.addr(), format!("127.0.0.1:{}", cfg.socks.port));
+        assert!(!cfg.domains.is_empty());
     }
 
     #[test]
-    fn parse_minimal() {
-        let c: Config = toml::from_str(minimal_toml()).unwrap();
-        assert_eq!(c.domains, vec!["**.example.com"]);
-        assert_eq!(c.listen.port, 1080);
-        assert_eq!(c.upstream.port, 10808);
-        assert!(c.ssh_tunnel.is_none());
-        assert!(c.system_proxy.is_none());
-        assert!(c.dns.is_none());
-    }
-
-    #[test]
-    fn ips_default_empty() {
-        let toml = r#"
-        domains = []
-        [listen]
-        addr = "127.0.0.1"
-        port = 1080
-        [upstream]
-        addr = "127.0.0.1"
-        port = 10808
-        "#;
-        let c: Config = toml::from_str(toml).unwrap();
-        assert!(c.ips.is_empty());
-    }
-
-    #[test]
-    fn system_proxy_defaults() {
-        let sp = SystemProxyConfig::default();
-        assert!(sp.enabled);
-        assert!(sp.configure_npm);
-        assert!(sp.configure_git);
-        assert!(sp.configure_curl);
-    }
-
-    #[test]
-    fn dns_defaults() {
-        let dns = DnsConfig::default();
-        assert_eq!(dns.listen_port, 5300);
-        assert_eq!(dns.upstream_dns, "8.8.8.8:53");
-        assert_eq!(dns.fallback_dns, "8.8.8.8:53");
-    }
-
-    #[test]
-    fn roundtrip() {
-        let c: Config = toml::from_str(minimal_toml()).unwrap();
-        let serialized = toml::to_string_pretty(&c).unwrap();
-        let c2: Config = toml::from_str(&serialized).unwrap();
-        assert_eq!(c.domains, c2.domains);
-        assert_eq!(c.listen.addr, c2.listen.addr);
-        assert_eq!(c.listen.port, c2.listen.port);
-        assert_eq!(c.upstream.addr, c2.upstream.addr);
-        assert_eq!(c.upstream.port, c2.upstream.port);
-    }
-
-    #[test]
-    fn ssh_password_skipped_when_none() {
-        let c: Config = toml::from_str(minimal_toml()).unwrap();
-        let serialized = toml::to_string_pretty(&c).unwrap();
-        assert!(!serialized.contains("password"));
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            domains: vec![],
-            ips: vec![],
-            listen: ListenConfig { addr: "127.0.0.1".into(), port: 1080 },
-            upstream: UpstreamConfig { addr: "127.0.0.1".into(), port: 10808 },
-            ssh_tunnel: None,
-            system_proxy: None,
-            dns: None,
-        }
-    }
-}
-
-impl Config {
-    pub fn load_or_create(path: &std::path::Path) -> Self {
-        use tracing::{error, info};
-        if !path.exists() {
-            let default = Self::default();
-            if let Some(dir) = path.parent() {
-                let _ = std::fs::create_dir_all(dir);
-            }
-            if default.save(path).is_ok() {
-                info!("created default config at {}", path.display());
-            }
-            return default;
-        }
-        let raw = match std::fs::read_to_string(path) {
-            Ok(s) => s,
-            Err(e) => { error!("cannot read {}: {}", path.display(), e); std::process::exit(1); }
-        };
-        match toml::from_str(&raw) {
-            Ok(c) => c,
-            Err(e) => { error!("config parse error: {}", e); std::process::exit(1); }
-        }
-    }
-
-    pub fn save(&self, path: &std::path::Path) -> std::io::Result<()> {
-        let s = toml::to_string_pretty(self)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        std::fs::write(path, s)
+    fn empty_yaml_yields_defaults() {
+        let cfg: Config = serde_yaml::from_str("{}").unwrap();
+        assert_eq!(cfg.socks.port, 1080);
+        assert_eq!(cfg.tun.gateway, "10.0.0.1");
     }
 }

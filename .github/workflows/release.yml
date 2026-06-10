@@ -31,10 +31,20 @@ jobs:
               run: cargo clippy -- -D warnings
 
     build:
-        name: 🔨 Build
+        name: 🔨 Build (${{ matrix.label }})
         needs: test
         if: startsWith(github.ref, 'refs/tags/v')
-        runs-on: macos-latest
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - os: macos-latest
+                      label: macOS
+                    - os: ubuntu-latest
+                      label: Linux
+                    - os: windows-latest
+                      label: Windows
+        runs-on: ${{ matrix.os }}
         steps:
             - uses: actions/checkout@v4
 
@@ -42,44 +52,83 @@ jobs:
 
             - uses: Swatinem/rust-cache@v2
 
-            - name: Install dependencies
+            # ----- macOS: .app bundle + .dmg -----
+            - name: Install macOS dependencies
+              if: matrix.os == 'macos-latest'
               run: brew install librsvg create-dmg
 
             - name: Generate AppIcon.icns
+              if: matrix.os == 'macos-latest'
               run: ./scripts/make-icns.sh
 
             - name: Install cargo-bundle
+              if: matrix.os == 'macos-latest'
               run: cargo install cargo-bundle
 
             - name: Build app bundle
+              if: matrix.os == 'macos-latest'
               run: cargo bundle --release
 
             - name: Ad-hoc sign
+              if: matrix.os == 'macos-latest'
               run: codesign --deep --force --sign - target/release/bundle/osx/Talpa.app
 
-            - name: Create DMG
+            - name: Package macOS artifacts
+              if: matrix.os == 'macos-latest'
               run: |
+                  mkdir -p dist
                   create-dmg \
                     --volname "Talpa" \
                     --icon-size 100 \
                     --icon "Talpa.app" 175 190 \
                     --hide-extension "Talpa.app" \
                     --app-drop-link 425 190 \
-                    "Talpa.dmg" \
+                    "dist/Talpa-macos.dmg" \
                     "target/release/bundle/osx/"
+                  (cd target/release/bundle/osx && zip -r "$GITHUB_WORKSPACE/dist/Talpa-macos.zip" Talpa.app)
 
-            - name: Zip app bundle
+            # ----- Linux: standalone binary -----
+            - name: Install Linux dependencies
+              if: matrix.os == 'ubuntu-latest'
               run: |
-                  cd target/release/bundle/osx
-                  zip -r "$GITHUB_WORKSPACE/Talpa.zip" Talpa.app
+                  sudo apt-get update
+                  sudo apt-get install -y libgtk-3-dev libayatana-appindicator3-dev
+
+            - name: Build (Linux)
+              if: matrix.os == 'ubuntu-latest'
+              run: cargo build --release
+
+            - name: Package Linux artifact
+              if: matrix.os == 'ubuntu-latest'
+              run: |
+                  mkdir -p dist
+                  tar -czf dist/Talpa-linux-x86_64.tar.gz -C target/release talpa
+
+            # ----- Windows: standalone .exe (wintun.dll embedded at build time) -----
+            - name: Fetch wintun.dll
+              if: matrix.os == 'windows-latest'
+              shell: pwsh
+              run: |
+                  Invoke-WebRequest -Uri https://www.wintun.net/builds/wintun-0.14.1.zip -OutFile wintun.zip
+                  Expand-Archive wintun.zip -DestinationPath wintun-extract
+                  Copy-Item wintun-extract\wintun\bin\amd64\wintun.dll assets\wintun.dll
+
+            - name: Build (Windows)
+              if: matrix.os == 'windows-latest'
+              run: cargo build --release
+
+            - name: Package Windows artifact
+              if: matrix.os == 'windows-latest'
+              shell: pwsh
+              run: |
+                  New-Item -ItemType Directory -Force dist | Out-Null
+                  Compress-Archive -Path target\release\talpa.exe -DestinationPath dist\Talpa-windows-x86_64.zip
 
             - name: Upload artifacts
               uses: actions/upload-artifact@v4
               with:
-                  name: Talpa-macos
-                  path: |
-                      Talpa.dmg
-                      Talpa.zip
+                  name: talpa-${{ matrix.label }}
+                  path: dist/*
 
     release:
         name: 🚀 Release
@@ -99,16 +148,15 @@ jobs:
               with:
                   args: --latest --strip header
 
-            - name: Download artifact
+            - name: Download artifacts
               uses: actions/download-artifact@v4
               with:
-                  name: Talpa-macos
+                  path: dist
+                  merge-multiple: true
 
             - name: Create GitHub Release
               uses: softprops/action-gh-release@v2
               with:
                   name: ${{ github.ref_name }}
                   body: ${{ steps.cliff.outputs.content }}
-                  files: |
-                      Talpa.dmg
-                      Talpa.zip
+                  files: dist/*

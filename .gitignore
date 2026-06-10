@@ -1,5 +1,6 @@
-/target
-config.toml
+target
+config.yml
+assets/wintun.dll
+assets/AppIcon.icns
 .DS_Store
 .idea
-assets/AppIcon.icns
